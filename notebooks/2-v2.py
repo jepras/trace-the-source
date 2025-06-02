@@ -156,7 +156,7 @@ def update_visualization(songs_dict):
     return visualize_sampling_network(songs_dict)
 
 
-def calculate_y_positions(songs, year_positions, k=1.0, iterations=50):
+def calculate_y_positions(songs_dict, year_positions, k=1.0, iterations=50):
     """
     Calculate y positions using a force-directed layout that:
     - Keeps x positions fixed by year
@@ -164,11 +164,11 @@ def calculate_y_positions(songs, year_positions, k=1.0, iterations=50):
     - Keeps connected nodes closer together
     """
     # Initialize y positions randomly
-    y_positions = {song_id: np.random.rand() for song_id in songs}
+    y_positions = {song_id: np.random.rand() for song_id in songs_dict}
 
     # Calculate year groups for better spacing
     year_groups = {}
-    for song_id, song in songs.items():
+    for song_id, song in songs_dict.items():
         year = int(song["year"])
         if year not in year_groups:
             year_groups[year] = []
@@ -189,7 +189,7 @@ def calculate_y_positions(songs, year_positions, k=1.0, iterations=50):
                         y_positions[song_id2] -= force
 
         # Attractive forces between connected nodes
-        for song_id, song in songs.items():
+        for song_id, song in songs_dict.items():
             for sampled_id in song["samples"]:
                 if sampled_id in y_positions:
                     # Pull connected nodes closer
@@ -205,7 +205,7 @@ def calculate_y_positions(songs, year_positions, k=1.0, iterations=50):
     return y_positions
 
 
-def visualize_sampling_network(songs, fig=None):
+def visualize_sampling_network(songs_dict, fig=None):
     """
     Create or update a visualization of the sampling network.
     Returns the figure object for further updates.
@@ -218,21 +218,24 @@ def visualize_sampling_network(songs, fig=None):
     G = nx.DiGraph()
 
     # Add nodes to graph
-    for song_id, song in songs.items():
+    for song_id, song in songs_dict.items():
         G.add_node(song_id, **song)
 
     # Add edges to graph
-    for song_id, song in songs.items():
+    for song_id, song in songs_dict.items():
         for sampled_id in song["samples"]:
             G.add_edge(sampled_id, song_id)  # Edge from sampled to sampler
 
     # Calculate positions
-    year_positions = {song_id: int(song["year"]) for song_id, song in songs.items()}
-    y_positions = calculate_y_positions(songs, year_positions)
+    year_positions = {
+        song_id: int(song["year"]) for song_id, song in songs_dict.items()
+    }
+    y_positions = calculate_y_positions(songs_dict, year_positions)
 
     # Combine x and y positions
     pos = {
-        song_id: (year_positions[song_id], y_positions[song_id]) for song_id in songs
+        song_id: (year_positions[song_id], y_positions[song_id])
+        for song_id in songs_dict
     }
 
     # Clear existing traces
@@ -258,23 +261,24 @@ def visualize_sampling_network(songs, fig=None):
     )
 
     # Add nodes
-    node_x = [pos[song_id][0] for song_id in songs]
-    node_y = [pos[song_id][1] for song_id in songs]
+    node_x = [pos[song_id][0] for song_id in songs_dict]
+    node_y = [pos[song_id][1] for song_id in songs_dict]
 
     # Calculate node sizes based on how many songs sample this song
     node_sizes = [
-        8 + (len(songs[song_id]["sampled_by"]) * 2) for song_id in songs
+        8 + (len(songs_dict[song_id]["sampled_by"]) * 2) for song_id in songs_dict
     ]  # Reduced base size
 
     # Calculate node colors based on how many samples this song uses
     node_colors = [
-        f"rgb({min(255, len(songs[song_id]['samples']) * 50)}, 0, 255)"
-        for song_id in songs
+        f"rgb({min(255, len(songs_dict[song_id]['samples']) * 50)}, 0, 255)"
+        for song_id in songs_dict
     ]
 
     # Create hover text with just title and artist
     hover_texts = [
-        f"{songs[song_id]['title']}<br>{songs[song_id]['artist']}" for song_id in songs
+        f"{songs_dict[song_id]['title']}<br>{songs_dict[song_id]['artist']}"
+        for song_id in songs_dict
     ]
 
     fig.add_trace(
@@ -330,7 +334,7 @@ def initialize_main_song(song_id=109):
         song_id (int): ID of the main song to fetch
 
     Returns:
-        tuple: (songs dictionary, base_url, headers, song_data, client)
+        tuple: (songs_dict, base_url, headers, song_data, client)
     """
     # Initialize clients
     client = init_openai_client()
@@ -340,9 +344,9 @@ def initialize_main_song(song_id=109):
     song_data = get_song_data(song_id, base_url, headers)
 
     # Initialize songs dictionary with just the main song
-    songs = {}
+    songs_dict = {}
     main_song_id = song_data["id"]
-    songs[main_song_id] = {
+    songs_dict[main_song_id] = {
         "id": main_song_id,
         "title": song_data["title"],
         "artist": song_data["artist_names"],
@@ -351,25 +355,31 @@ def initialize_main_song(song_id=109):
         "samples": [],
     }
 
-    return songs, base_url, headers, song_data, client
+    return songs_dict, base_url, headers, song_data, client
 
 
-def add_samples_layer(songs_dict, base_url, headers, song_data=None):
+def add_samples_layer(songs_dict, base_url, headers, song_data=None, client=None):
     """
     Add a layer of samples to the songs dictionary and update visualization.
     This will process samples for either:
     - The main song (if song_data is provided)
     - All songs that haven't had their samples processed yet (if song_data is None)
 
+    Also analyzes and stores genres for any new songs added to the dictionary.
+
     Args:
         songs_dict (dict): Current songs dictionary
         base_url (str): Genius API base URL
         headers (dict): Request headers
         song_data (dict, optional): Data of the main song to process samples from
+        client (OpenAI client, optional): OpenAI client for genre analysis
 
     Returns:
         tuple: (updated songs dictionary, updated figure)
     """
+    # Keep track of new songs that need genre analysis
+    new_songs = set()
+
     if song_data is not None:
         # Process samples for the main song
         main_song_id = song_data["id"]
@@ -377,6 +387,11 @@ def add_samples_layer(songs_dict, base_url, headers, song_data=None):
             songs_dict, main_song_id, song_data
         )
         songs_dict[main_song_id]["samples_processed"] = True
+
+        # Add any new songs to the set
+        for sample_id in songs_dict[main_song_id]["samples"]:
+            if "genres" not in songs_dict[sample_id]:
+                new_songs.add(sample_id)
     else:
         # Find songs that haven't had their samples processed
         songs_to_process = [
@@ -398,12 +413,27 @@ def add_samples_layer(songs_dict, base_url, headers, song_data=None):
                 # Mark this song as processed
                 songs_dict[song_id]["samples_processed"] = True
 
+                # Add any new songs to the set
+                for sample_id in songs_dict[song_id]["samples"]:
+                    if "genres" not in songs_dict[sample_id]:
+                        new_songs.add(sample_id)
+
                 # Add a small delay to respect rate limits
                 time.sleep(0.5)
 
             except Exception as e:
                 print(f"Error processing song {song_id}: {str(e)}")
                 continue
+
+    # Analyze genres for new songs if client is provided
+    if client and new_songs:
+        print(f"\nAnalyzing genres for {len(new_songs)} new songs...")
+        for song_id in new_songs:
+            print(f"\nProcessing genres for: {songs_dict[song_id]['title']}")
+            genres = analyze_song_genres(songs_dict[song_id], client)
+            songs_dict[song_id]["genres"] = genres
+            # Add a small delay to respect rate limits
+            time.sleep(1)
 
     # Create updated visualization
     fig = visualize_sampling_network(songs_dict)
@@ -511,25 +541,37 @@ def update_songs_with_genres(songs_dict, client):
 
 # Example usage:
 # 1. Initialize with just the main song
-songs, base_url, headers, song_data, client = initialize_main_song()
+songs_dict, base_url, headers, song_data, client = initialize_main_song()
 
 # 2. Add genre information to the songs dictionary
-songs = update_songs_with_genres(songs, client)
+songs_dict = update_songs_with_genres(songs_dict, client)
 
 # 3. Print the songs dictionary to verify genre data
 print("\nSongs dictionary with genres:")
-for song_id, song in songs.items():
+for song_id, song in songs_dict.items():
     print(f"\n{song['title']} by {song['artist']}:")
     print(f"Genres: {song.get('genres', [])}")
 
 # 4. Continue with visualization if desired
-main_fig = visualize_sampling_network(songs)
+main_fig = visualize_sampling_network(songs_dict)
 main_fig.show()
 
-# 5. Add first layer of samples (main song)
-songs, first_layer_fig = add_samples_layer(songs, base_url, headers, song_data)
+# 5. Add first layer of samples (main song) and analyze their genres
+songs_dict, first_layer_fig = add_samples_layer(
+    songs_dict, base_url, headers, song_data, client
+)
 first_layer_fig.show()
 
-# 6. Add next layer of samples (all unprocessed songs)
-songs, next_layer_fig = add_samples_layer(songs, base_url, headers)
+# 6. Add next layer of samples (all unprocessed songs) and analyze their genres
+songs_dict, next_layer_fig = add_samples_layer(
+    songs_dict, base_url, headers, client=client
+)
 next_layer_fig.show()
+
+# 7. Print final songs dictionary with all genres
+print("\nFinal songs dictionary with all genres:")
+for song_id, song in songs_dict.items():
+    print(f"\n{song['title']} by {song['artist']}:")
+    print(f"Genres: {song.get('genres', [])}")
+    print(f"Samples: {len(song['samples'])}")
+    print(f"Sampled by: {len(song['sampled_by'])}")
