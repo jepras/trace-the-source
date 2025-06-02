@@ -1,8 +1,8 @@
-# Data Project Template
+## Project Name
+Trace the source
 
-<a target="_blank" href="https://datalumina.com/">
-    <img src="https://img.shields.io/badge/Datalumina-Project%20Template-2856f7" alt="Datalumina Project" />
-</a>
+## Description
+
 
 ## Cookiecutter Data Science
 This project template is a simplified version of the [Cookiecutter Data Science](https://cookiecutter-data-science.drivendata.org) template, created to suit the needs of Datalumina and made available as a GitHub template.

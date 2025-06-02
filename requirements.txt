@@ -1,2 +1,11 @@
+requests
 ipykernel
 python-dotenv
+openai
+pydantic
+networkx
+plotly
+pandas
+numpy
+nbformat>=4.2.0
+scipy
